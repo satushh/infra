@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>infra-ai — node observability assistant</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header>
+  <div class="row">
+    <div>
+      <div class="title">infra-ai</div>
+      <div class="sub">Hoodi node observability assistant</div>
+    </div>
+    <div class="picker">
+      <label>provider
+        <select id="provider"></select>
+      </label>
+      <label>model
+        <select id="model"></select>
+      </label>
+      <span class="picker-status" id="picker-status"></span>
+    </div>
+  </div>
+</header>
+
+<main id="chat">
+  <div class="msg system">
+    Ask about the node. Examples:
+    <ul>
+      <li>How is my node doing?</li>
+      <li>What is the current beacon sync distance?</li>
+      <li>Any errors in the beacon logs in the last 30 minutes?</li>
+      <li>How much memory is geth using and is it growing?</li>
+    </ul>
+  </div>
+</main>
+
+<form id="form">
+  <textarea id="q" rows="2" placeholder="Ask a question… (Enter to send, Shift+Enter for newline)"></textarea>
+  <button type="submit" id="send">Ask</button>
+</form>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

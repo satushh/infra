@@ -54,6 +54,33 @@ All other ports (Nethermind JSON-RPC `8545` and Engine API `8551`; beacon REST `
 | `P2P_HOST_IP` | Public IP address of the host, advertised by the beacon node to peers (`--p2p-host-ip`). Required so inbound libp2p connections from the rest of the network can reach this node. |
 
 
+## Pausing and resuming the stack
+
+To take the node offline for a while without losing chain or observability data, use `stop` (or `down`) — **never** `down -v`.
+
+```sh
+# pause
+docker compose stop
+
+# resume (later)
+docker compose start
+```
+
+`docker compose down` is also safe — it removes the containers but keeps the bind mounts under `./data/` and the named volumes (`loki`, `prometheus`, `grafana`, `tempo`, `peer-geo`, `fork-choice`). Resume with `docker compose up -d`. The `-v` flag is what deletes named volumes, so don't pass it.
+
+What happens when you resume after a few days of downtime:
+- **EL** resumes from its last block and snap-syncs the missed range (minutes to a couple of hours depending on how far behind).
+- **beacon** resumes from its last finalized state and fetches missing slots from peers. Blob retention is ~18 days, so blob backfill works fine for pauses shorter than that — no need to redo a checkpoint sync.
+- **Prometheus / Loki / Grafana** keep their existing data; you just have a gap on the graphs covering the downtime.
+
+One thing to check before resuming: if your host's public IP changed during the downtime (VPN, ISP lease), update `P2P_HOST_IP` in `.env` first. Otherwise the beacon advertises a stale address and inbound libp2p connections fail.
+
+Quick post-resume sanity check:
+```sh
+docker compose ps
+curl -s http://127.0.0.1:3500/eth/v1/node/syncing
+```
+
 ## Links
 - [http://<P2P_HOST_IP>:3000/d/adnmforf/beacon-node](http://<P2P_HOST_IP>:3000/d/adnmforf/beacon-node) - The beacon node Grafana Dashboard
 

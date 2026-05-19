@@ -1,0 +1,46 @@
+participants_matrix:
+  el:
+    - el_type: ethrex
+      el_image: ethpandaops/ethrex:glamsterdam-devnet-4
+      el_extra_params:
+         - --http.api=eth,net,web3,admin   # workaround for kurtosis enode probe, see https://github.com/ethpandaops/ethereum-package/pull/1392
+  cl:
+    - cl_type: prysm
+      cl_image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-4-tmp
+      vc_type: prysm
+      vc_image: ethpandaops/prysm-validator:glamsterdam-devnet-4-tmp
+    - cl_type: lighthouse
+      cl_image: eserilev/lighthouse:glamsterdam-devnet-4
+  count: 1
+
+network_params:
+  gloas_fork_epoch: 1
+  withdrawal_type: "0x01"
+  seconds_per_slot: 6
+  validator_balance: 40000
+  genesis_gaslimit: 150000000
+  gas_limit: 150000000
+
+additional_services:
+  - dora
+  - assertoor
+  - spamoor
+  - checkpointz
+spamoor_params:
+  image: ethpandaops/spamoor:master
+
+assertoor_params:
+  run_stability_check: false
+  run_block_proposal_check: false
+  tests:
+    - { file: "https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/gloas-dev/builder-lifecycle.yaml" }
+
+snooper_enabled: false
+global_log_level: debug
+
+port_publisher:
+  additional_services:
+    enabled: true
+
+checkpointz_params:
+  image: ethpandaops/checkpointz:gloas-latest

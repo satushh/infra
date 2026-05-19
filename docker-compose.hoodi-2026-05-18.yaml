@@ -1,0 +1,218 @@
+services:
+  geth:
+    container_name: geth
+    image: ${GETH_IMAGE}
+    stop_grace_period: 10m
+    tty: true
+    restart: unless-stopped
+    volumes:
+      - ./data/${NETWORK}/geth:/root/.ethereum
+      - ./data/${NETWORK}/geth/logs:/var/log/geth
+      - ./data/${NETWORK}/ipc:/jwt
+    ports:
+      - "30303:30303"
+      - "30303:30303/udp"
+      - "127.0.0.1:8545:8545"
+      - "127.0.0.1:8551:8551"
+    command:
+      - --${NETWORK}
+      - --syncmode=snap
+      - --state.scheme=path
+      - --history.logs.disable
+      - --history.transactions=100000
+      - --gcmode=full
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.api=eth,net,web3,engine
+      - --http.vhosts=*
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.vhosts=*
+      - --authrpc.jwtsecret=/jwt/jwt-secret
+      - --metrics
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=6065
+      - --log.file=/var/log/geth/geth.log
+      - --verbosity=3
+    environment:
+      - GETH_IMAGE=${GETH_IMAGE}
+      - NETWORK=${NETWORK}
+
+  beacon:
+    container_name: beacon
+    image: ${BEACON_IMAGE}
+    tty: true
+    restart: unless-stopped
+    stop_grace_period: 10m
+    volumes:
+      - ./data/${NETWORK}/beacon:/root/.eth2/
+      - ./data/${NETWORK}/ipc:/var/run/ipc
+    ports:
+      - 12000:12000/udp
+      - 13000:13000/udp
+      - 13000:13000
+      - 127.0.0.1:3500:3500
+      - 127.0.0.1:4000:4000
+      - 127.0.0.1:8080:8080
+      - 127.0.0.1:6060:6060
+    command:
+      - --accept-terms-of-use
+      - --${NETWORK}
+      - --suggested-fee-recipient=0xbB52ca978a8a2598e496dC1Eed76C23F2400541b
+      - --execution-endpoint=http://geth:8551
+      - --jwt-secret=/var/run/ipc/jwt-secret
+      - --checkpoint-sync-url=${CHECKPOINT_SYNC_URL}
+      - --p2p-host-ip=${P2P_HOST_IP}
+      - --rpc-host=0.0.0.0
+      - --grpc-gateway-host=0.0.0.0
+      - --verbosity=info
+      - --blob-storage-layout=by-epoch
+      - --monitoring-host=0.0.0.0
+      - --pprof
+      - --pprofaddr=0.0.0.0
+      - --enable-tracing
+      - --tracing-endpoint=http://tempo:4318/v1/traces
+      - --tracing-process-name=beacon
+      - --trace-sample-fraction=1.0
+    environment:
+      - BEACON_IMAGE=${BEACON_IMAGE}
+      - NETWORK=${NETWORK}
+      - CHECKPOINT_SYNC_URL=${CHECKPOINT_SYNC_URL}
+      - P2P_HOST_IP=${P2P_HOST_IP}
+
+  peer-geo-exporter:
+    container_name: peer-geo-exporter
+    image: nalepae/peer-geo-exporter:v0.1.0
+    restart: unless-stopped
+    volumes:
+      - peer-geo:/data
+    command:
+      - --beacon-url=http://beacon:3500
+      - --mmdb-path=/data/dbip-city-lite.mmdb
+      - --listen-addr=:9101
+      - --poll-interval=60s
+
+  fork-choice-recorder:
+    container_name: fork-choice-recorder
+    image: nalepae/fork-choice-recorder:v0.1.0
+    restart: unless-stopped
+    volumes:
+      - fork-choice:/data
+    command:
+      - --beacon-url=http://beacon:3500
+      - --listen-addr=:9102
+      - --data-dir=/data
+      - --retention=24h
+      - --poll-interval=12s
+
+  alloy:
+    container_name: alloy
+    image: grafana/alloy
+    restart: unless-stopped
+    volumes:
+      - ./configuration/alloy.hoodi.hcl:/etc/alloy/config.hcl
+      - ./data/${NETWORK}/beacon/logs:/var/log/beacon:ro
+      - ./data/${NETWORK}/geth/logs:/var/log/geth:ro
+    command: run /etc/alloy/config.hcl
+    environment:
+      - NETWORK=${NETWORK}
+
+  node_exporter:
+    container_name: node-exporter
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+
+  loki:
+    container_name: loki
+    image: grafana/loki
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:3100:3100
+    volumes:
+      - loki:/loki
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:v3.6.0
+    restart: unless-stopped
+    volumes:
+      - ./configuration/prometheus.hoodi.yml:/etc/prometheus/prometheus.yml
+      - prometheus:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+
+  pyroscope:
+    container_name: pyroscope
+    image: grafana/pyroscope
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:4040:4040
+
+  tempo:
+    container_name: tempo
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ./configuration/tempo.yaml:/etc/tempo/tempo.yaml
+      - tempo:/var/tempo
+    ports:
+      - 127.0.0.1:3200:3200
+      - 127.0.0.1:4318:4318
+
+  infra-ai:
+    container_name: infra-ai
+    build: ./infra-ai
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-lmstudio}
+      - LMSTUDIO_URL=${LMSTUDIO_URL:-http://host.docker.internal:1234/v1}
+      - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-qwen/qwen3-coder-30b}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
+      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY:-}
+      - CEREBRAS_MODEL=${CEREBRAS_MODEL:-llama-3.3-70b}
+      - PROM_URL=http://prometheus:9090
+      - LOKI_URL=http://loki:3100
+      - BEACON_URL=http://beacon:3500
+    ports:
+      - "127.0.0.1:7777:7777"
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:12.4
+    restart: unless-stopped
+    user: "1000"
+    environment:
+      - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource,ae3e-plotly-panel
+    volumes:
+      - grafana:/var/lib/grafana
+      - ./configuration/grafana/dashboard.yaml:/etc/grafana/provisioning/dashboards/default.yml
+      - ./configuration/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/default.yml
+      - ./configuration/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - 3000:3000
+
+volumes:
+  loki:
+  prometheus:
+  grafana:
+  tempo:
+  peer-geo:
+  fork-choice:

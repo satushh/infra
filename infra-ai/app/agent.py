@@ -2,12 +2,13 @@ import json
 import os
 from typing import Iterator, Optional
 import httpx
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 
 from .tools import TOOL_SCHEMAS, TOOL_IMPLS
 
 DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "lmstudio").lower()
 MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "8"))
+TOOL_USE_RETRIES = int(os.getenv("TOOL_USE_RETRIES", "1"))
 
 LMSTUDIO_URL = os.getenv("LMSTUDIO_URL", "http://host.docker.internal:1234/v1")
 LMSTUDIO_API_KEY = os.getenv("LMSTUDIO_API_KEY", "lm-studio")
@@ -105,6 +106,56 @@ Beacon REST endpoints:
 """
 
 
+# Ranked fallback list used when the active provider/model emits a malformed
+# tool call. Order: different provider first (most likely to succeed), then
+# alternative tool-capable models on the same provider, then local. A `None`
+# model means "use whatever the provider's default_model resolves to".
+_FALLBACK_ORDER = [
+    ("cerebras", "gpt-oss-120b"),
+    ("groq", "openai/gpt-oss-120b"),
+    ("groq", "moonshotai/kimi-k2-instruct"),
+    ("groq", "openai/gpt-oss-20b"),
+    ("lmstudio", None),
+]
+
+
+def _is_tool_use_failed(e: Exception) -> bool:
+    """True for Groq's `tool_use_failed` 400 (model emitted a malformed tool call)."""
+    if not isinstance(e, BadRequestError):
+        return False
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error") or {}
+        if isinstance(err, dict) and err.get("code") == "tool_use_failed":
+            return True
+    s = str(e)
+    return "tool_use_failed" in s or "tool call validation failed" in s
+
+
+def _fallback_suggestions(current_provider: str, current_model: str,
+                          max_n: int = 3) -> list[dict]:
+    """Probe providers and return up to `max_n` ranked alternatives, skipping
+    the current pick and anything unavailable."""
+    probes = list_providers().get("providers", {})
+    out: list[dict] = []
+    for prov, model in _FALLBACK_ORDER:
+        info = probes.get(prov) or {}
+        if not info.get("available"):
+            continue
+        models = info.get("models") or []
+        chosen = model if (model and model in models) else info.get("default_model")
+        if not chosen:
+            continue
+        if prov == current_provider and chosen == current_model:
+            continue
+        if any(s["provider"] == prov and s["model"] == chosen for s in out):
+            continue
+        out.append({"provider": prov, "model": chosen})
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _resolve(provider: Optional[str], model: Optional[str]) -> tuple[str, str, str, str]:
     p = (provider or DEFAULT_PROVIDER).lower()
     if p == "groq":
@@ -136,10 +187,26 @@ def ask(user_question: str, history: list | None = None,
     trace = []
 
     for _ in range(MAX_TOOL_ROUNDS):
-        resp = client.chat.completions.create(
-            model=m, messages=messages, tools=TOOL_SCHEMAS,
-            tool_choice="auto", temperature=0.2,
-        )
+        resp = None
+        for attempt in range(TOOL_USE_RETRIES + 1):
+            try:
+                resp = client.chat.completions.create(
+                    model=m, messages=messages, tools=TOOL_SCHEMAS,
+                    tool_choice="auto", temperature=0.2,
+                )
+                break
+            except BadRequestError as e:
+                if _is_tool_use_failed(e) and attempt < TOOL_USE_RETRIES:
+                    continue
+                if _is_tool_use_failed(e):
+                    return {
+                        "error_type": "tool_use_failed",
+                        "message": str(e),
+                        "provider": p, "model": m,
+                        "suggestions": _fallback_suggestions(p, m),
+                        "trace": trace,
+                    }
+                raise
         msg = resp.choices[0].message
         messages.append(msg.model_dump(exclude_none=True))
 
@@ -185,14 +252,31 @@ def ask_stream(user_question: str, history: list | None = None,
     messages.append({"role": "user", "content": user_question})
 
     for _ in range(MAX_TOOL_ROUNDS):
-        try:
-            resp = client.chat.completions.create(
-                model=m, messages=messages, tools=TOOL_SCHEMAS,
-                tool_choice="auto", temperature=0.2,
-            )
-        except Exception as e:
-            yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
-            return
+        resp = None
+        for attempt in range(TOOL_USE_RETRIES + 1):
+            try:
+                resp = client.chat.completions.create(
+                    model=m, messages=messages, tools=TOOL_SCHEMAS,
+                    tool_choice="auto", temperature=0.2,
+                )
+                break
+            except BadRequestError as e:
+                if _is_tool_use_failed(e) and attempt < TOOL_USE_RETRIES:
+                    yield {"type": "retry", "attempt": attempt + 1,
+                           "max": TOOL_USE_RETRIES, "reason": "tool_use_failed"}
+                    continue
+                if _is_tool_use_failed(e):
+                    yield {"type": "recoverable_error",
+                           "error_type": "tool_use_failed",
+                           "message": str(e),
+                           "provider": p, "model": m,
+                           "suggestions": _fallback_suggestions(p, m)}
+                    return
+                yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+                return
+            except Exception as e:
+                yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+                return
         msg = resp.choices[0].message
         messages.append(msg.model_dump(exclude_none=True))
 

@@ -98,13 +98,64 @@ q.addEventListener("keydown", e => {
   }
 });
 
-form.addEventListener("submit", async e => {
-  e.preventDefault();
-  const question = q.value.trim();
-  if (!question) return;
-  q.value = "";
-  send.disabled = true;
+// Sticky switch: updates the dropdowns so the new pick persists for
+// subsequent turns. If the suggested model isn't in the dropdown's
+// option list (e.g. a tool-capable model filtered out of the curated
+// list), inject it so .value sticks.
+function setProviderModel(provider, model) {
+  providerSel.value = provider;
+  populateModels();
+  if (model) {
+    const exists = [...modelSel.options].some(o => o.value === model);
+    if (!exists) {
+      const opt = document.createElement("option");
+      opt.value = model;
+      opt.textContent = model;
+      modelSel.appendChild(opt);
+    }
+    modelSel.value = model;
+  }
+}
 
+function renderRecoverablePanel(ev, question) {
+  const panel = el("div", "recoverable");
+  const head = el("div", "rec-head",
+    `⚠ <strong>${escapeHTML(ev.provider)} · ${escapeHTML(ev.model)}</strong> ` +
+    `emitted a malformed tool call (${escapeHTML(ev.error_type || "error")}).`);
+  panel.appendChild(head);
+
+  const suggestions = ev.suggestions || [];
+  if (suggestions.length === 0) {
+    panel.appendChild(el("div", "rec-empty", "No alternative providers available."));
+    return panel;
+  }
+
+  const row = el("div", "rec-row");
+  row.appendChild(el("span", "rec-label", "Retry with:"));
+  for (const s of suggestions) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rec-btn";
+    btn.textContent = `${s.provider} · ${s.model}`;
+    btn.addEventListener("click", () => {
+      setProviderModel(s.provider, s.model);
+      panel.remove();
+      runQuestion(question);
+    });
+    row.appendChild(btn);
+  }
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "rec-btn rec-dismiss";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", () => panel.remove());
+  row.appendChild(dismiss);
+  panel.appendChild(row);
+  return panel;
+}
+
+async function runQuestion(question) {
+  send.disabled = true;
   const provider = providerSel.value;
   const model = modelSel.value;
 
@@ -131,6 +182,7 @@ form.addEventListener("submit", async e => {
     let finalText = null;
     const pendingTools = new Map();
     let errorText = null;
+    let recoverable = null;
 
     while (true) {
       const {done, value} = await reader.read();
@@ -162,6 +214,10 @@ form.addEventListener("submit", async e => {
           finalText = event.answer || "(no answer)";
         } else if (event.type === "error") {
           errorText = event.message;
+        } else if (event.type === "recoverable_error") {
+          recoverable = event;
+        } else if (event.type === "retry") {
+          status.innerHTML = `<span class="spinner"></span>retry ${event.attempt}/${event.max} — ${escapeHTML(event.reason)}…`;
         } else if (event.type === "meta") {
           meta.textContent = `${event.provider} · ${event.model}`;
         }
@@ -169,7 +225,9 @@ form.addEventListener("submit", async e => {
     }
 
     status.remove();
-    if (errorText) {
+    if (recoverable) {
+      assistantBody.appendChild(renderRecoverablePanel(recoverable, question));
+    } else if (errorText) {
       const errBox = el("div", "error", `error: ${escapeHTML(errorText)}`);
       assistantBody.appendChild(errBox);
     } else {
@@ -186,6 +244,14 @@ form.addEventListener("submit", async e => {
     send.disabled = false;
     q.focus();
   }
+}
+
+form.addEventListener("submit", async e => {
+  e.preventDefault();
+  const question = q.value.trim();
+  if (!question) return;
+  q.value = "";
+  await runQuestion(question);
 });
 
 loadProviders();

@@ -188,3 +188,37 @@ pre.briefing {
   font-size: 12px;
   margin: 4px 0;
 }
+.recoverable {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #2a2415;
+  border: 1px solid #6a5520;
+  border-radius: 6px;
+  color: #f0d68a;
+  font-size: 12.5px;
+}
+.recoverable .rec-head { margin-bottom: 8px; }
+.recoverable .rec-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.recoverable .rec-label { color: #8a96a8; margin-right: 4px; }
+.recoverable .rec-btn {
+  background: #3a3220;
+  color: #f0d68a;
+  border: 1px solid #6a5520;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.recoverable .rec-btn:hover { background: #4a4128; }
+.recoverable .rec-dismiss {
+  color: #8a96a8;
+  background: transparent;
+  border-color: #3a3a3a;
+}
+.recoverable .rec-empty { color: #8a96a8; }

@@ -211,7 +211,7 @@ infra-ai/
 
 - No request cancellation in the UI (a long round-trip can't be aborted).
 - No tool-result caching — identical questions re-run all tool calls.
-- Some Groq models (e.g. `llama-3.3-70b-versatile`) intermittently emit malformed tool calls; retry usually works. No auto-retry/fallback yet.
+- Some Groq models (e.g. `llama-3.3-70b-versatile`) intermittently emit malformed tool calls (text-encoded `<function=...>` instead of a structured tool call) and Groq's server rejects the request with `tool_use_failed`. The agent auto-retries once (configurable via `TOOL_USE_RETRIES`); on exhaustion the UI shows an inline panel offering ranked fallback provider/model picks — clicking one switches the dropdowns (sticky) and re-runs the same question.
 - Conversation history is held in the page only; reload wipes it.
 
 See `docs/ai-assistant-design.md` for the longer design notes.

@@ -214,4 +214,143 @@ infra-ai/
 - Some Groq models (e.g. `llama-3.3-70b-versatile`) intermittently emit malformed tool calls (text-encoded `<function=...>` instead of a structured tool call) and Groq's server rejects the request with `tool_use_failed`. The agent auto-retries once (configurable via `TOOL_USE_RETRIES`); on exhaustion the UI shows an inline panel offering ranked fallback provider/model picks — clicking one switches the dropdowns (sticky) and re-runs the same question.
 - Conversation history is held in the page only; reload wipes it.
 
+### Adding a new LLM provider
+
+Any OpenAI-compatible chat-completions endpoint can be plugged in with a small patch in three places:
+
+1. **`.env`** — add `MYPROVIDER_API_KEY=...` and `MYPROVIDER_MODEL=...` (plus an optional `MYPROVIDER_URL` if it isn't the default).
+2. **`docker-compose.hoodi-2026-05-18.yaml`** — forward both env vars into the `infra-ai` service's `environment:` block, with `${VAR:-default}` syntax so the container starts even when unset.
+3. **`infra-ai/app/agent.py`** — read the env vars near the top of the file, add a branch to `_resolve()` that returns the matching `(provider, base_url, api_key, model)` tuple, and add a probe block to `list_providers()` that calls `<base_url>/models` so the frontend dropdown can populate.
+
+Rebuild with `docker compose -f docker-compose.hoodi-2026-05-18.yaml up -d --build infra-ai`. The new provider then shows up in the UI dropdown automatically.
+
+The Groq, Cerebras, and LM Studio integrations in `agent.py` are each ~20 lines and serve as templates. If the new provider doesn't return a useful `/models` list (some don't), the frontend dropdown falls back gracefully — you can still pass `model` explicitly per-request.
+
+### Where the model gets its "known good" metric names
+
+The system prompt in `infra-ai/app/agent.py` includes a curated cheat sheet of real metric names verified against this stack (e.g. `beacon_head_slot`, `chain_head_block`, `eth_db_chaindata_disk_size`, `system_memory_used`, `p2p_peer_count{state="Connected"}`). When extending the assistant to a stack with different metric labels (different EL client, additional exporters), update that block — otherwise the model will keep querying names that don't exist and recovering via `prom_metric_search` round-trips, which is slow.
+
 See `docs/ai-assistant-design.md` for the longer design notes.
+
+## Running ePBS devnets with Kurtosis (and pointing `infra-ai` at them)
+
+The repo contains `kurtosis-epbs-devnet-4.yaml` — a Kurtosis ethereum-package args file
+for the **glamsterdam-devnet-4 / gloas (ePBS)** devnet. Prysm + Lighthouse paired with
+ethrex, 6s slots, `gloas_fork_epoch: 1`, with `dora`, `assertoor`, `spamoor`,
+`checkpointz` add-ons and a builder-lifecycle assertoor playbook.
+
+### Why not just put this in `docker-compose.yaml`?
+
+Kurtosis is a separate orchestrator on top of Docker, with its own engine and
+Starlark configs. Trying to wrap it inside `docker-compose` re-implements what
+Kurtosis already does. The clean pattern is: **run Kurtosis directly**, then point
+`infra-ai` at whatever the enclave brings up.
+
+### Running the devnet
+
+```sh
+kurtosis run --enclave epbs-devnet-4 \
+  github.com/ethpandaops/ethereum-package \
+  --args-file kurtosis-epbs-devnet-4.yaml
+```
+
+Kurtosis prints a service/port table at the end. Before running, sanity-check that
+the image tags still exist on the registry — `prysm-beacon-chain:glamsterdam-devnet-4-tmp`
+and `eserilev/lighthouse:glamsterdam-devnet-4` are temporary/personal tags that
+get rotated.
+
+### Wiring `infra-ai` to the devnet — three layered options
+
+Choose one. All three keep `infra-ai` itself unchanged from how it already runs
+against the Hoodi stack; what changes is *where* its `PROM_URL` / `BEACON_URL`
+point.
+
+**Option 1 (recommended): add `prometheus_grafana` to `additional_services`**
+in `kurtosis-epbs-devnet-4.yaml`. The ethereum-package will then spin up a
+Prometheus that scrapes every EL, CL, and validator client in the enclave, plus
+a Grafana with pre-built dashboards. `infra-ai` gets a single `PROM_URL` to
+target and the model can query per-client metrics directly. Cleanest unlock —
+one config line, no glue code.
+
+**Option 2: a small `kurtosis-env.sh` helper** that runs
+`kurtosis enclave inspect epbs-devnet-4 --format json`, picks the Prometheus +
+a CL REST port out of it, writes a `.env.kurtosis`, then `docker compose up
+infra-ai`. Useful if you'll restart the enclave often (ports change every run).
+
+**Option 3: native `kurtosis_inspect` tool inside `infra-ai`** so the LLM can
+ask "which services are up in the enclave?" itself. Most flexible, most code —
+only worth it if you're poking many enclaves with very different layouts.
+
+### Automatic regular briefings (the "babysitter" pattern)
+
+Once `infra-ai` is pointed at the devnet, you can have a tiny scheduler sidecar
+hit `/ask` every N minutes and persist the answers. Sketch (would go into a
+new `docker-compose.kurtosis.yaml`, not the Hoodi one):
+
+```yaml
+infra-ai-scheduler:
+  image: alpine
+  depends_on: [infra-ai]
+  command: >
+    sh -c 'apk add --no-cache curl && while true; do
+      curl -s -X POST http://infra-ai:7777/ask
+        -H "Content-Type: application/json"
+        -d "{\"q\":\"How is the devnet doing? Anomalies in the last 15 min?\",\"provider\":\"groq\"}"
+        >> /var/log/briefings/$(date +%Y%m%d-%H%M).json;
+      sleep 900;
+    done'
+  volumes:
+    - ./data/briefings:/var/log/briefings
+```
+
+That gives you "kurtosis run → automatic AI briefings every 15 min, persisted
+to `./data/briefings/`", with no Kurtosis-specific code in `infra-ai`.
+
+### Status (as of 2026-05-19) — what to do next
+
+Nothing in this section is implemented yet — it's the plan agreed at the end of
+the previous session. To resume:
+
+1. Edit `kurtosis-epbs-devnet-4.yaml`: add `prometheus_grafana` to
+   `additional_services`. Re-verify image tags first.
+2. `kurtosis run` the enclave (see command above) and note the published
+   Prometheus port from the output.
+3. Create `docker-compose.kurtosis.yaml` with just two services: `infra-ai`
+   (env vars pointing at the enclave's Prometheus + a CL beacon REST port) and
+   `infra-ai-scheduler` (the sidecar above).
+4. `docker compose -f docker-compose.kurtosis.yaml up -d` and watch
+   `./data/briefings/` fill up.
+
+If port discovery turns out to be annoying enough to warrant Option 2, the
+`kurtosis enclave inspect ... --format json` output structure is documented at
+https://docs.kurtosis.com/cli/inspect.
+
+## Repository state — handoff notes (2026-05-19)
+
+For anyone (or any Claude session) picking this up cold:
+
+- **Working tree**: branch `infra-ai-hoodi` in this repo, pushed to
+  `origin = https://github.com/satushh/infra.git` (the user's fork). Upstream
+  is `https://github.com/nalepae/infra.git` as the `upstream` remote. The
+  branch was last merged with `upstream/master` on 2026-05-19.
+- **What is running locally**: the Hoodi stack from
+  `docker-compose.hoodi-2026-05-18.yaml` — Geth + Prysm v7.1.3 + the
+  observability stack + `infra-ai`. To check: `docker compose -f
+  docker-compose.hoodi-2026-05-18.yaml ps`. To pause without losing data: see
+  the "Pausing and resuming the stack" section above (`docker compose stop`,
+  *not* `down -v`).
+- **What's in `.env`** (gitignored — never commit): three LLM provider API
+  keys (`GROQ_API_KEY`, `CEREBRAS_API_KEY`, plus LM Studio URL pointing at
+  `host.docker.internal:1234`), plus the Hoodi node config (`NETWORK`,
+  `GETH_IMAGE`, `BEACON_IMAGE`, `CHECKPOINT_SYNC_URL`, `P2P_HOST_IP`).
+- **User's local source clones**: `go-ethereum/` and `prysm/` are checked out
+  in the repo root for reference but are gitignored. Do *not* commit them.
+- **Open thread from last session**: this Kurtosis integration. Recommended
+  path is Option 1 + the scheduler sidecar above.
+- **PR direction not yet decided**: the branch lives on the user's fork. No
+  PR has been opened. Whether to PR upstream to `nalepae/infra` or keep this
+  as a long-lived fork-only branch is an open call — confirm before opening
+  any PR.
+
+If you change any of the above (e.g. land Option 1, or move work back to
+`master`), update this section so the next pickup is just as quick.

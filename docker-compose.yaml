@@ -1,6 +1,20 @@
 services:
+  jwt-init:
+    container_name: jwt-init
+    image: alpine:3
+    volumes:
+      - ./data/${NETWORK}/ipc:/ipc
+    command:
+      - sh
+      - -c
+      - test -f /ipc/jwt-secret || od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > /ipc/jwt-secret
+
   nethermind:
     container_name: nethermind
+    profiles: ["nethermind"]
+    depends_on:
+      jwt-init:
+        condition: service_completed_successfully
     image: ${NETHERMIND_IMAGE}
     stop_grace_period: 10m
     tty: true
@@ -17,19 +31,60 @@ services:
       - --config=${NETWORK}
       - --JsonRpc.EngineHost=0.0.0.0
       - --JsonRpc.EnginePort=8551
-      - --Metrics.Enabled=true
-      - --Metrics.ExposeHost=0.0.0.0
-      - --Metrics.ExposePort=8088
-      - --Metrics.EnableDbSizeMetrics=true
-      - --Metrics.EnableDetailedMetric=true
-      - --Metrics.CountersEnabled=true
+      - --History.Pruning=Rolling
     environment:
       - NETHERMIND_IMAGE=${NETHERMIND_IMAGE}
       - NETWORK=${NETWORK}
+    networks:
+      default:
+        aliases:
+          - execution
+
+  geth:
+    container_name: geth
+    profiles: ["geth"]
+    depends_on:
+      jwt-init:
+        condition: service_completed_successfully
+    image: ${GETH_IMAGE}
+    stop_grace_period: 10m
+    tty: true
+    restart: unless-stopped
+    volumes:
+      - ./data/${NETWORK}/geth:/data
+      - ./data/${NETWORK}/ipc:/ipc
+    ports:
+      - "30303:30303" # p2p (TCP)
+      - "30303:30303/udp" # p2p (UDP)
+      - "127.0.0.1:8545:8545" # JSON-RPC
+      - "127.0.0.1:8551:8551" # Engine API
+    command:
+      - --${NETWORK}
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.vhosts=*
+      - --http.api=eth,net,web3
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.vhosts=*
+      - --authrpc.jwtsecret=/ipc/jwt-secret
+      - --history.chain=postmerge
+    environment:
+      - GETH_IMAGE=${GETH_IMAGE}
+      - NETWORK=${NETWORK}
+    networks:
+      default:
+        aliases:
+          - execution
 
   beacon:
     container_name: beacon
     image: ${BEACON_IMAGE}
+    depends_on:
+      jwt-init:
+        condition: service_completed_successfully
     tty: true
     restart: unless-stopped
     stop_grace_period: 10m
@@ -48,9 +103,11 @@ services:
       - --accept-terms-of-use
       - --${NETWORK}
       - --suggested-fee-recipient=0xbB52ca978a8a2598e496dC1Eed76C23F2400541b
-      - --execution-endpoint=http://nethermind:8551
+      - --execution-endpoint=http://execution:8551
       - --jwt-secret=/var/run/ipc/jwt-secret
-      - --checkpoint-sync-url=${CHECKPOINT_SYNC_URL}
+      - --checkpoint-sync-url=https://${NETWORK}.beaconstate.info
+      - --enable-backfill
+      - --beacon-db-pruning
       - --p2p-host-ip=${P2P_HOST_IP}
       - --rpc-host=0.0.0.0
       - --grpc-gateway-host=0.0.0.0
@@ -67,7 +124,6 @@ services:
     environment:
       - BEACON_IMAGE=${BEACON_IMAGE}
       - NETWORK=${NETWORK}
-      - CHECKPOINT_SYNC_URL=${CHECKPOINT_SYNC_URL}
       - P2P_HOST_IP=${P2P_HOST_IP}
 
   peer-geo-exporter:
@@ -102,7 +158,6 @@ services:
     volumes:
       - ./configuration/alloy.hcl:/etc/alloy/config.hcl
       - ./data/${NETWORK}/beacon/logs:/var/log/beacon:ro
-      - ./data/${NETWORK}/nethermind/logs:/var/log/nethermind:ro
     command: run /etc/alloy/config.hcl
     environment:
       - NETWORK=${NETWORK}

@@ -4,11 +4,14 @@ Docker Compose stack to run an Ethereum node (execution + consensus) alongside a
 
 ## Services
 
-### `nethermind`
-Execution layer client. Processes transactions, executes the EVM, and exposes the JSON-RPC and Engine API used by the consensus client.
+### `jwt-init`
+One-shot bootstrap container. Generates the shared Engine API JWT secret at `./data/${NETWORK}/ipc/jwt-secret` if it does not already exist, then exits. The execution client and `beacon` both `depends_on` it (`service_completed_successfully`), so the secret is guaranteed to be present before they start. This is client-agnostic: both Nethermind and Geth would create the secret themselves if missing, but generating it up front guarantees the file is present before either starts.
+
+### `nethermind` / `geth` (execution client)
+Execution layer client. Processes transactions, executes the EVM, and exposes the JSON-RPC and Engine API used by the consensus client. The stack ships **two** alternative execution clients — Nethermind and Geth — exactly one runs at a time, selected via a Compose profile (see [Choosing the execution client](#choosing-the-execution-client)). Whichever is active is reachable under the shared network alias `execution`, so the rest of the stack does not care which one runs.
 
 ### `beacon`
-Consensus layer client (Prysm). Drives consensus, follows the beacon chain, and instructs `nethermind` what to build/validate via the Engine API. Authenticates to `nethermind` with a shared JWT secret mounted from `./data/${NETWORK}/ipc`.
+Consensus layer client (Prysm). Drives consensus, follows the beacon chain, and instructs the execution client what to build/validate via the Engine API (`http://execution:8551`). Authenticates with a shared JWT secret mounted from `./data/${NETWORK}/ipc`.
 
 ### `alloy`
 Grafana Alloy agent. Tails the beacon node logs and ships them to `loki`.
@@ -47,10 +50,11 @@ All other ports (Nethermind JSON-RPC `8545` and Engine API `8551`; beacon REST `
 
 | Variable | Description |
 |----------|-------------|
-| `NETWORK` | Ethereum network name (e.g. `mainnet`, `sepolia`, `holesky`). Used as the Nethermind `--config` value, the beacon `--<network>` flag, and to namespace the on-disk data directory under `./data/${NETWORK}/`. |
-| `NETHERMIND_IMAGE` | Docker image (with tag) to use for the `nethermind` service, e.g. `nethermind/nethermind:1.34.0`. Pinned here so upgrades are explicit. |
+| `NETWORK` | Ethereum network name (e.g. `mainnet`, `hoodi`). |
+| `COMPOSE_PROFILES` | Selects the execution client: `nethermind` or `geth`. Only the matching service is started. |
+| `NETHERMIND_IMAGE` | Docker image (with tag) for the `nethermind` service, e.g. `nethermind/nethermind:1.37.2`. Pinned here so upgrades are explicit. Used only when `COMPOSE_PROFILES=nethermind`. |
+| `GETH_IMAGE` | Docker image (with tag) for the `geth` service, e.g. `ethereum/client-go:v1.16.1`. Pinned here so upgrades are explicit. Used only when `COMPOSE_PROFILES=geth`. |
 | `BEACON_IMAGE` | Docker image (with tag) to use for the `beacon` service, e.g. `gcr.io/prysmaticlabs/prysm/beacon-chain:v6.0.4`. |
-| `CHECKPOINT_SYNC_URL` | URL of a trusted beacon checkpoint-sync provider. Lets the beacon node start from a recent finalized state instead of syncing from genesis. |
 | `P2P_HOST_IP` | Public IP address of the host, advertised by the beacon node to peers (`--p2p-host-ip`). Required so inbound libp2p connections from the rest of the network can reach this node. |
 
 

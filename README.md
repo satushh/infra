@@ -329,14 +329,14 @@ If port discovery turns out to be annoying enough to warrant Option 2, the
 `kurtosis enclave inspect ... --format json` output structure is documented at
 https://docs.kurtosis.com/cli/inspect.
 
-## Repository state — handoff notes (2026-05-19)
+## Repository state — handoff notes (2026-06-23)
 
 For anyone (or any Claude session) picking this up cold:
 
 - **Working tree**: branch `infra-ai-hoodi` in this repo, pushed to
   `origin = https://github.com/satushh/infra.git` (the user's fork). Upstream
   is `https://github.com/nalepae/infra.git` as the `upstream` remote. The
-  branch was last merged with `upstream/master` on 2026-05-19.
+  branch was last merged with `upstream/master` on 2026-06-23.
 - **What is running locally**: the Hoodi stack from
   `docker-compose.hoodi-2026-05-18.yaml` — Geth + Prysm v7.1.3 + the
   observability stack + `infra-ai`. To check: `docker compose -f

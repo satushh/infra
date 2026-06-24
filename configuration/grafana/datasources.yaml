@@ -91,3 +91,35 @@ datasources:
         - http://fork-choice-recorder:9102
       global_queries: []
     readOnly: false
+  - id: 6
+    uid: ethpandaops-devnets
+    orgId: 1
+    name: EthPandaOps Devnets
+    type: prometheus
+    typeName: Prometheus
+    access: proxy
+    url: http://host.docker.internal:9119
+    user: ''
+    database: ''
+    basicAuth: false
+    isDefault: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 12s
+      prometheusType: Prometheus
+      prometheusVersion: 2.50.1
+    readOnly: false
+  - id: 7
+    uid: ethpandaops-devnet-logs
+    orgId: 1
+    name: EthPandaOps Devnet Logs
+    type: loki
+    typeName: Loki
+    access: proxy
+    url: http://host.docker.internal:9119
+    user: ''
+    basicAuth: false
+    isDefault: false
+    jsonData:
+      timeout: 90
+    readOnly: false

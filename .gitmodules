@@ -1,0 +1,4 @@
+[submodule "tools/panda-grafana-adapter"]
+	path = tools/panda-grafana-adapter
+	url = https://github.com/satushh/panda-grafana-adapter.git
+	branch = main

@@ -2,6 +2,24 @@
 
 Docker Compose stack to run an Ethereum node (execution + consensus) alongside an observability stack.
 
+## Devnet fleet monitoring (`make up`)
+
+Beyond this host's own node, Grafana also charts the **ethPandaOps devnet fleet** — metrics + logs for networks like `glamsterdam-devnet-5`, `perf-devnet-3`, `bal-devnet-7` (and `mainnet`/`sepolia`). That data comes through the [`panda-grafana-adapter`](https://github.com/satushh/panda-grafana-adapter) submodule under `tools/`, a thin shim that maps Grafana's Prometheus/Loki APIs onto the authenticated `panda` CLI.
+
+```sh
+git clone --recurse-submodules <this repo>   # fresh clone; or in an existing one:
+git submodule update --init                   # fetch tools/panda-grafana-adapter
+
+make up        # panda-server (docker) + adapter (host) + grafana (docker)
+make status    # health of all three layers
+make down      # stop adapter + grafana
+make           # list all targets
+```
+
+Then open <http://localhost:3000>. The adapter runs **on the host** — it shells out to the macOS `panda` binary and its `~/.config/panda` auth, so it can't be a container; `make up` orchestrates that host process together with the two Docker layers. Requires `panda` installed + authenticated (`panda auth login`) and Docker running.
+
+> `make up` starts Grafana + the devnet path **only — not this host's own node**. To run the local node, bring up the full stack with `docker compose up -d` (see below).
+
 ## Services
 
 ### `jwt-init`

@@ -11,8 +11,7 @@
 #   make down → stop adapter + grafana     make logs   → tail adapter log
 #
 # The adapter is managed by this Makefile (background process). It does NOT
-# auto-start on reboot — just re-run `make up`. (The old launchd agent has been
-# retired in favour of this.)
+# auto-start on reboot — just re-run `make up`.
 
 ADAPTER_DIR  := tools/panda-grafana-adapter
 ADAPTER      := $(ADAPTER_DIR)/panda_grafana_adapter.py
@@ -23,14 +22,17 @@ PYTHON       := python3
 HEALTH       := http://127.0.0.1:$(ADAPTER_PORT)/health
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart status logs panda-up adapter-up adapter-down grafana-up sync-dashboards
+.PHONY: help up down restart status logs submodules panda-up adapter-up adapter-down grafana-up sync-dashboards
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n",$$1,$$2}'
 
-up: panda-up adapter-up grafana-up ## Bring up the whole stack (panda + adapter + grafana)
+up: submodules panda-up adapter-up grafana-up ## Bring up the whole stack (panda + adapter + grafana)
 	@echo "✓ stack up → http://localhost:3000"
+
+submodules: ## Fetch the adapter submodule if missing (so a fresh clone + make up just works)
+	@test -f $(ADAPTER) || { echo "→ fetching adapter submodule"; git submodule update --init $(ADAPTER_DIR); }
 
 panda-up: ## Start panda-server (docker) and verify auth
 	@if panda --log-level error server status 2>/dev/null | grep -q "Health: Healthy"; then \

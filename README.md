@@ -33,10 +33,9 @@ Beyond this host's own node, Grafana also charts the **ethPandaOps devnet fleet*
 ```
 
 ```sh
-git clone --recurse-submodules <this repo>   # fresh clone; or in an existing one:
-git submodule update --init                   # fetch tools/panda-grafana-adapter
-
-make up        # panda-server (docker) + adapter (host) + grafana (docker)
+git clone https://github.com/satushh/infra.git
+cd infra
+make up        # fetches the adapter submodule, then starts panda-server + adapter + grafana
 make status    # health of all three layers
 make down      # stop adapter + grafana
 make           # list all targets

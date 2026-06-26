@@ -6,6 +6,32 @@ Docker Compose stack to run an Ethereum node (execution + consensus) alongside a
 
 Beyond this host's own node, Grafana also charts the **ethPandaOps devnet fleet** — metrics + logs for networks like `glamsterdam-devnet-6`, `perf-devnet-3`, `bal-devnet-7` (and `mainnet`/`sepolia`). That data comes through the [`panda-grafana-adapter`](https://github.com/satushh/panda-grafana-adapter) submodule under `tools/`, a thin shim that maps Grafana's Prometheus/Loki APIs onto the authenticated `panda` CLI.
 
+```
+   browser  ──▶  http://localhost:3000
+      │
+      ▼
+  ═══════════════ Docker (infra docker-compose) ═══════════════
+   grafana  ·  :3000
+     provisioned datasources:
+       • Prometheus  ──────────────▶  prometheus  ┐  this host's
+       • Loki        ──────────────▶  loki        ┘  hoodi node
+       • EthPandaOps Devnets       ──┐
+       • EthPandaOps Devnet Logs   ──┤  http://host.docker.internal:9119
+     dashboards: devnet6-comprehensive, devnet6-prysm-health, devnet-prysm-node, …
+  ══════════════════════════════════════════════════════════════
+                                      │
+                                      ▼   host process, started by `make up`
+   panda_grafana_adapter.py  ·  :9119
+                                      │  shells out — one `panda` subprocess per request
+                                      ▼
+  ═══════════ Docker ═══════════
+   panda-server  ·  :2480
+  ══════════════════════════════
+                                      │  panda's authenticated OIDC proxy
+                                      ▼
+   ethPandaOps cloud  —  VictoriaMetrics (metrics)  ·  ClickHouse otel_logs (logs)
+```
+
 ```sh
 git clone --recurse-submodules <this repo>   # fresh clone; or in an existing one:
 git submodule update --init                   # fetch tools/panda-grafana-adapter
